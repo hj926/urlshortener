@@ -10,13 +10,19 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 
+import org.springframework.data.redis.core.StringRedisTemplate;
+
 @RestController
 public class RedirectController {
 
     private final UrlShortenerService service;
 
-    public RedirectController(UrlShortenerService service) {
+    private final StringRedisTemplate redis;
+    private static final String HIT_KEY_PREFIX = "url:hit:";
+
+    public RedirectController(UrlShortenerService service, StringRedisTemplate redis) {
         this.service = service;
+        this.redis = redis;
     }
 
     @GetMapping("/{shortCode}")
@@ -28,6 +34,9 @@ public class RedirectController {
         }
 
         String longUrl = service.resolve(shortCode);
+
+        // PV 统计：只要成功重定向，就记一次
+        redis.opsForValue().increment(HIT_KEY_PREFIX + shortCode);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setLocation(URI.create(longUrl));
