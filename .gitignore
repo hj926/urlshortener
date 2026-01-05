@@ -1,0 +1,54 @@
+# ===== OS / Editor =====
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# ===== Java build output =====
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# ===== Maven / Gradle =====
+# Maven wrapper jar is usually committed, but its target files are not
+.mvn/wrapper/maven-wrapper.jar
+# If you DON'T want to commit wrapper jar, comment out above line and ignore:
+# .mvn/wrapper/
+
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===== Logs =====
+*.log
+
+# ===== Spring Boot =====
+# If you generate local config files
+application-local.properties
+application-local.yml
+application-local.yaml
+
+# ===== Environment / secrets =====
+.env
+*.pem
+*.key
+*.p12
+*.jks
+
+# ===== IntelliJ / Eclipse =====
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.factorypath
+
+# ===== Test reports =====
+surefire-reports/
+failsafe-reports/
+
+# ===== Others =====
+out/
+
