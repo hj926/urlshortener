@@ -1,6 +1,8 @@
 package com.huangjie.url_shortener.controller;
 
+import com.huangjie.url_shortener.exception.NotFoundException;
 import com.huangjie.url_shortener.service.UrlShortenerService;
+import com.huangjie.url_shortener.util.ShortCodeValidator;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +21,12 @@ public class RedirectController {
 
     @GetMapping("/{shortCode}")
     public ResponseEntity<Void> redirect(@PathVariable String shortCode) {
+
+        // meet shortCode , get 404（dont search Redis/DB）
+        if (!ShortCodeValidator.isValid(shortCode)) {
+            throw new NotFoundException("Invalid short code: " + shortCode);
+        }
+
         String longUrl = service.resolve(shortCode);
 
         HttpHeaders headers = new HttpHeaders();
