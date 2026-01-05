@@ -13,6 +13,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
+import com.huangjie.url_shortener.exception.ExpiredException;
+import com.huangjie.url_shortener.exception.NotFoundException;
+
+
 @Service
 public class UrlShortenerService {
 
@@ -33,19 +37,26 @@ public class UrlShortenerService {
         String normalized = req.getLongUrl().trim();
         String hash = Hashing.sha256Hex(normalized).substring(0, 32);
 
-        // 1) 去重（先做 expireAt = null 的永久链接）
-        Optional<UrlMapping> existing = repo.findByLongUrlHashAndExpireAtIsNull(hash);
-        if (existing.isPresent()) {
-            UrlMapping m = existing.get();
-            return new ShortenResponse(m.getShortCode(), baseUrl + "/" + m.getShortCode());
+        // 计算过期时间（Step22）
+        Instant expireAt = null;
+        if (req.getTtlSeconds() != null && req.getTtlSeconds() > 0) {
+            expireAt = Instant.now().plusSeconds(req.getTtlSeconds());
         }
 
-        // 2) 生成短码（MVP：用 DB 自增 ID 的方式）
+        // 去重：只对“永久链接”（expireAt == null）做去重，MVP策略
+        if (expireAt == null) {
+            Optional<UrlMapping> existing = repo.findByLongUrlHashAndExpireAtIsNull(hash);
+            if (existing.isPresent()) {
+                UrlMapping m = existing.get();
+                return new ShortenResponse(m.getShortCode(), baseUrl + "/" + m.getShortCode());
+            }
+        }
+
         UrlMapping created = UrlMapping.builder()
                 .longUrl(normalized)
                 .longUrlHash(hash)
                 .createdAt(Instant.now())
-                .expireAt(null)
+                .expireAt(expireAt)
                 .build();
 
         // 先保存拿到自增 id
@@ -55,8 +66,9 @@ public class UrlShortenerService {
         created.setShortCode(shortCode);
         repo.save(created);
 
-        // 可选：把刚生成的 shortCode 也写进缓存（让第一次 redirect 也走缓存）
-        redis.opsForValue().set(KEY_PREFIX + shortCode, created.getLongUrl(), HIT_TTL);
+        // 写缓存：TTL 跟随 expireAt（避免“过期了但缓存还在”）
+        Duration cacheTtl = computeCacheTtl(created.getExpireAt());
+        redis.opsForValue().set(KEY_PREFIX + shortCode, created.getLongUrl(), cacheTtl);
 
         return new ShortenResponse(shortCode, baseUrl + "/" + shortCode);
     }
@@ -68,7 +80,7 @@ public class UrlShortenerService {
         String cached = redis.opsForValue().get(key);
         if (cached != null) {
             if (NULL_MARKER.equals(cached)) {
-                throw new RuntimeException("Short code not found: " + shortCode);
+                throw new NotFoundException("Short code not found: " + shortCode);
             }
             return cached;
         }
@@ -77,13 +89,31 @@ public class UrlShortenerService {
         UrlMapping m = repo.findByShortCode(shortCode).orElse(null);
 
         if (m == null) {
-            // 缓存穿透保护：短 TTL 记空
             redis.opsForValue().set(key, NULL_MARKER, MISS_TTL);
-            throw new RuntimeException("Short code not found: " + shortCode);
+            throw new NotFoundException("Short code not found: " + shortCode);
+
         }
 
-        // 3) 回填缓存
-        redis.opsForValue().set(key, m.getLongUrl(), HIT_TTL);
+        // 过期判断（Step22）
+        if (m.getExpireAt() != null && m.getExpireAt().isBefore(Instant.now())) {
+            redis.opsForValue().set(key, NULL_MARKER, MISS_TTL);
+            throw new ExpiredException("Short code expired: " + shortCode);
+
+        }
+
+        // 3) 回填缓存（TTL 跟随 expireAt）
+        Duration ttl = computeCacheTtl(m.getExpireAt());
+        redis.opsForValue().set(key, m.getLongUrl(), ttl);
+
         return m.getLongUrl();
+    }
+
+    private Duration computeCacheTtl(Instant expireAt) {
+        if (expireAt == null) return HIT_TTL;
+
+        long secondsLeft = expireAt.getEpochSecond() - Instant.now().getEpochSecond();
+        if (secondsLeft <= 0) secondsLeft = 1;
+
+        return Duration.ofSeconds(Math.min(secondsLeft, HIT_TTL.toSeconds()));
     }
 }
